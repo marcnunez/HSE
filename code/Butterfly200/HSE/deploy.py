@@ -1,6 +1,9 @@
 import argparse
 import os,sys
 import pdb
+
+from tqdm import tqdm
+
 sys.path.insert(0,'.')
 import shutil
 import time
@@ -13,9 +16,19 @@ import torch.optim
 import torch.utils.data
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
+import mltool_backend.utils.nn.utils as nn_utils
 
 from dataset import Butterfly200
 from ResNetEmbed import ResNetEmbed
+
+
+def select_device(gpu_device):
+    if (gpu_device == 'cpu') or (gpu_device == '-1') or (gpu_device == -1):
+        device_to_use = '/cpu:0'
+    else:
+        device_to_use = '/gpu:' + str(gpu_device)
+
+    nn_utils.select_device(gpu_device)
 
 def arg_parse():
     parser = argparse.ArgumentParser(description='PyTorch HSE deploying')
@@ -94,11 +107,11 @@ def validate(val_loader, model, args):
     model.eval() 
 
     end = time.time()
-    for i, (input, gt_family, gt_subfamily, gt_genus, gt_species) in enumerate(val_loader):
-        gt_family = gt_family.cuda(async=True)
-        gt_subfamily = gt_subfamily.cuda(async=True)
-        gt_genus = gt_genus.cuda(async=True)
-        gt_species = gt_species.cuda(async=True)
+    for i, (input, gt_family, gt_subfamily, gt_genus, gt_species) in enumerate(tqdm(val_loader)):
+        gt_family = gt_family.cuda()
+        gt_subfamily = gt_subfamily.cuda()
+        gt_genus = gt_genus.cuda()
+        gt_species = gt_species.cuda()
 
         input_var = torch.autograd.Variable(input, volatile=True).cuda()
         
@@ -111,14 +124,14 @@ def validate(val_loader, model, args):
         prec1_L3, prec5_L3 = accuracy(pred1_L3.data, gt_genus, topk=(1, 5))
         prec1_L4, prec5_L4 = accuracy(pred1_L4.data, gt_species, topk=(1, 5))
 
-        top1_L1.update(prec1_L1[0], input.size(0))
-        top5_L1.update(prec5_L1[0], input.size(0))
-        top1_L2.update(prec1_L2[0], input.size(0))
-        top5_L2.update(prec5_L2[0], input.size(0))
-        top1_L3.update(prec1_L3[0], input.size(0))
-        top5_L3.update(prec5_L3[0], input.size(0))
-        top1_L4.update(prec1_L4[0], input.size(0))
-        top5_L4.update(prec5_L4[0], input.size(0))
+        top1_L1.update(prec1_L1, input.size(0))
+        top5_L1.update(prec5_L1, input.size(0))
+        top1_L2.update(prec1_L2, input.size(0))
+        top5_L2.update(prec5_L2, input.size(0))
+        top1_L3.update(prec1_L3, input.size(0))
+        top5_L3.update(prec5_L3, input.size(0))
+        top1_L4.update(prec1_L4, input.size(0))
+        top5_L4.update(prec5_L4, input.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -188,4 +201,6 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 if __name__=="__main__":
+    select_device(2)
+
     main()

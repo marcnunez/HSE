@@ -42,8 +42,8 @@ def main():
 
     # Create dataloader
     print("==> Creating dataloader...")
-    data_dir='../../../data/Butterfly200/images_rz'
-    test_list='../../../data/Butterfly200/Butterfly200_test_V3.txt'
+    data_dir='../../../data/Butterfly200/images'
+    test_list='../../../data/Butterfly200/Butterfly200_test_release.txt'
     test_loader = get_training_test_set(data_dir, test_list)
 
     # load the network
@@ -95,7 +95,7 @@ def validate(val_loader, model, connect_m):
         # gt_order = gt_order.cuda(async=True)
         # gt_family = gt_family.cuda(async=True)
         # gt_genus = gt_genus.cuda(async=True)
-        gt_class = gt_class.cuda(async=True)
+        gt_class = gt_class.cuda()
 
         input_var = torch.autograd.Variable(input, volatile=True).cuda()
         # gt_order_var = torch.autograd.Variable(gt_order, volatile=True)
