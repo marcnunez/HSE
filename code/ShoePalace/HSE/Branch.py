@@ -8,11 +8,11 @@ import torch.nn as nn
 from model import Bottleneck
 
 class Branch(nn.Module):
-    def __init__(self, level='class'):
-        self.inplanes = 1024 # ResNet params
+    def __init__(self, level='species'):
+        self.inplanes = 1024 # ResNet class params
         super(Branch, self).__init__()
 
-        print "branch({}): (3 Bottlenecks) + fc".format(level)
+        print("branch({}): (3 Bottlenecks) + fc".format(level))
         self.resnet50_layer4 = self._make_layer(Bottleneck, 512, 3, stride=2)
 
     def _make_layer(self, block, planes, blocks, stride=1):
@@ -33,6 +33,7 @@ class Branch(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+       
         x = self.resnet50_layer4(x)
             
         return x

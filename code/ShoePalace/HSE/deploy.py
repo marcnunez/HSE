@@ -9,16 +9,16 @@ import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
+import torch.optim
 import torch.utils.data
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 
-from dataset import VegfruDataset
-from model import resnet50
-
+from dataset import Butterfly200
+from ResNetEmbed import ResNetEmbed
 
 def arg_parse():
-    parser = argparse.ArgumentParser(description='PyTorch BCNN Training')
+    parser = argparse.ArgumentParser(description='PyTorch HSE deploying')
     parser.add_argument('data', metavar='DIR',
                         help='path to dataset')
     parser.add_argument('testlist', metavar='DIR',
@@ -33,36 +33,32 @@ def arg_parse():
                         help='crop size')
     parser.add_argument('--scale_size', dest = 'scale_size',default=448, type=int, 
                         help='the size of the rescale image')
-    parser.add_argument('--level', dest='level', type=str,default='sub',
-                         metavar='LEVEL', help='different attribute level: sup > sub')
     args = parser.parse_args()
+    
     return args
 
 def print_args(args):
-    print "=========================================="
-    print "==========       CONFIG      ============="
-    print "=========================================="
+    print("==========================================")
+    print("==========       CONFIG      =============")
+    print("==========================================")
     for arg,content in args.__dict__.items():
-        print "{}:{}".format(arg,content)
-    print "\n"
-
+        print("{}:{}".format(arg,content))
+    print("\n")
 
 def main():
     args = arg_parse()
     print_args(args)
 
     # Create dataloader
-    print "==> Creating dataloader..."
+    print("==> Creating dataloader...")
     data_dir = args.data
     test_list = args.testlist
-    test_loader = get_test_set(data_dir, test_list, args)
+    test_loader = get_test_set(data_dir,test_list,args)
+    classes_dict = {'family': 5, 'subfamily': 23, 'genus': 116, 'species': 200}
 
     # load the network
-    print "==> Loading the network ..."
-    if args.level == 'sup':
-        model = resnet50(num_classes=25)
-    if args.level == 'sub':
-        model = resnet50(num_classes=292)
+    print("==> Loading the network ...")
+    model = ResNetEmbed(cdict=classes_dict)
 
     model.cuda()
 
@@ -71,51 +67,75 @@ def main():
             print("=> loading checkpoint '{}'".format(args.snapshot))
             checkpoint = torch.load(args.snapshot)
             model.load_state_dict(checkpoint['state_dict'])
-            print("=> loaded checkpoint '{}'"
-                  .format(args.snapshot))
+            print("=> loaded checkpoint '{}' (epoch {})"
+                  .format(args.snapshot, checkpoint['epoch']))
         else:
             print("=> no checkpoint found at '{}'".format(args.snapshot))
-            exit()
 
     cudnn.benchmark = True
 
-    print "Testing..."
+    print("Testing...")
     with torch.no_grad():
-        validate(test_loader, model,  args)
+        validate(test_loader, model, args)                              
 
 def validate(val_loader, model, args):
     batch_time = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
+
+    top1_L1 = AverageMeter()
+    top5_L1 = AverageMeter()
+    top1_L2 = AverageMeter()
+    top5_L2 = AverageMeter()
+    top1_L3 = AverageMeter()
+    top5_L3 = AverageMeter()
+    top1_L4 = AverageMeter()
+    top5_L4 = AverageMeter()
     
     # switch to evaluate mode
     model.eval() 
 
     end = time.time()
-    for i, (input, target) in enumerate(val_loader):
-        target = target.cuda(async=True)
-        input_var = torch.autograd.Variable(input, volatile=True).cuda()
-        target_var = torch.autograd.Variable(target, volatile=True)
+    for i, (input, gt_family, gt_subfamily, gt_genus, gt_species) in enumerate(val_loader):
+        gt_family = gt_family.cuda(async=True)
+        gt_subfamily = gt_subfamily.cuda(async=True)
+        gt_genus = gt_genus.cuda(async=True)
+        gt_species = gt_species.cuda(async=True)
 
+        input_var = torch.autograd.Variable(input, volatile=True).cuda()
+        
         # compute output
-        output = model(input_var)        
+        pred1_L1, pred1_L2, pred1_L3, pred1_L4 = model(input_var)
 
         # measure accuracy and record loss
-        prec1,prec5 = accuracy(output.data,target,topk = (1,5))
+        prec1_L1, prec5_L1 = accuracy(pred1_L1.data, gt_family, topk=(1, 5))
+        prec1_L2, prec5_L2 = accuracy(pred1_L2.data, gt_subfamily, topk=(1, 5))
+        prec1_L3, prec5_L3 = accuracy(pred1_L3.data, gt_genus, topk=(1, 5))
+        prec1_L4, prec5_L4 = accuracy(pred1_L4.data, gt_species, topk=(1, 5))
 
-        top1.update(prec1[0], input.size(0))
-        top5.update(prec5[0], input.size(0))
+        top1_L1.update(prec1_L1[0], input.size(0))
+        top5_L1.update(prec5_L1[0], input.size(0))
+        top1_L2.update(prec1_L2[0], input.size(0))
+        top5_L2.update(prec5_L2[0], input.size(0))
+        top1_L3.update(prec1_L3[0], input.size(0))
+        top5_L3.update(prec5_L3[0], input.size(0))
+        top1_L4.update(prec1_L4[0], input.size(0))
+        top5_L4.update(prec5_L4[0], input.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
+    print(' * L1(family): \tPrec@1 {top1_L1.avg:.3f} Prec@5 {top5_L1.avg:.3f}'
+          .format(top1_L1=top1_L1, top5_L1=top5_L1))
+    print(' * L2(subfamily): \tPrec@1 {top1_L2.avg:.3f} Prec@5 {top5_L2.avg:.3f}'
+          .format(top1_L2=top1_L2, top5_L2=top5_L2))
+    print(' * L3(genus): \tPrec@1 {top1_L3.avg:.3f} Prec@5 {top5_L3.avg:.3f}'
+          .format(top1_L3=top1_L3, top5_L3=top5_L3))
+    print(' * L4(species): \tPrec@1 {top1_L4.avg:.3f} Prec@5 {top5_L4.avg:.3f}'
+          .format(top1_L4=top1_L4, top5_L4=top5_L4))
 
-    print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
-          .format(top1=top1, top5=top5))
 
-    return top1.avg
+    return top1_L1.avg, top1_L2.avg, top1_L3.avg, top1_L4.avg
 
-def get_test_set(data_dir, test_list, args):
+def get_test_set(data_dir,test_list,args):
     # Data loading code
     # normalize for different pretrain model:
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
@@ -124,13 +144,13 @@ def get_test_set(data_dir, test_list, args):
     scale_size = args.scale_size
     # center crop
     test_data_transform = transforms.Compose([
-          transforms.Scale((scale_size,scale_size)),
+          transforms.Resize((scale_size,scale_size)),
           transforms.CenterCrop(crop_size),
           transforms.ToTensor(),
           normalize,
       ])
 
-    test_set = VegfruDataset(data_dir, test_list, test_data_transform, level=args.level)
+    test_set = Butterfly200(data_dir, test_list, test_data_transform)
     test_loader = DataLoader(dataset=test_set, num_workers=args.workers,batch_size=args.batch_size, shuffle=False)
 
     return test_loader

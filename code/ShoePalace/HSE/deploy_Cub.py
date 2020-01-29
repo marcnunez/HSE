@@ -41,13 +41,13 @@ def main():
     global best_prec1_order
 
     # Create dataloader
-    print "==> Creating dataloader..."
+    print("==> Creating dataloader...")
     data_dir='../../../data/Butterfly200/images_rz'
     test_list='../../../data/Butterfly200/Butterfly200_test_V3.txt'
     test_loader = get_training_test_set(data_dir, test_list)
 
     # load the network
-    print "==> Loading the network ..."
+    print("==> Loading the network ...")
     classes_dict = {'family': 5, 'subfamily': 24, 'genus': 116, 'species': 200}
     model = ResNetEmbed(branch_type='last_layer', cdict=classes_dict, sm_t=4, weight_norm='ch_softmax')
 
@@ -151,8 +151,8 @@ def validate(val_loader, model, connect_m):
         end = time.time()
 
         if i % 100 == 0:
-            print "iters: {}/{}".format(i, len(val_loader))
-            print "time: {batch_time.avg:.3f}".format(batch_time=batch_time)
+            print("iters: {}/{}".format(i, len(val_loader)))
+            print("time: {batch_time.avg:.3f}".format(batch_time=batch_time))
     f.close()
     
     # print(' * (order)@1 {top1_order.avg:.3f} Prec@5 {top5_order.avg:.3f}'

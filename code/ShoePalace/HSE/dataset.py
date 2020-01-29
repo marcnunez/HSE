@@ -1,13 +1,13 @@
 import torch.utils.data as data
 from os.path import join
 from PIL import Image
+import numpy as np
+import pickle
 
 class Butterfly200(data.Dataset):
-    def __init__(self, image_dir, list_path, input_transform = None, level='species'):
+    def __init__(self, image_dir, list_path, input_transform = None):
         super(Butterfly200, self).__init__()
-        print list_path
-
-        self.level = level
+        print(list_path)
 
         name_list = []
         family_label_list = []
@@ -42,16 +42,8 @@ class Butterfly200(data.Dataset):
         genus_label = self.genus_label_list[index] - 1
         species_label = self.species_label_list[index] - 1
         
-        if self.level == 'family':
-            target = family_label
-        if self.level == 'subfamily':
-            target = subfamily_label
-        if self.level == 'genus':
-            target = genus_label
-        if self.level == 'species':
-            target = species_label    
-
-        return input, target
+        return input, family_label, subfamily_label, genus_label, species_label
 
     def __len__(self):
         return len(self.image_filenames)
+

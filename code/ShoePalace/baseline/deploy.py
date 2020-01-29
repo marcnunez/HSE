@@ -13,8 +13,8 @@ import torch.utils.data
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 
-from dataset import VegfruDataset
-from ResNetEmbed import ResNetEmbed
+from dataset import Butterfly200
+from model import resnet50
 
 
 def arg_parse():
@@ -33,31 +33,39 @@ def arg_parse():
                         help='crop size')
     parser.add_argument('--scale_size', dest = 'scale_size',default=448, type=int, 
                         help='the size of the rescale image')
+    parser.add_argument('--level', dest='level', type=str,default='class',
+                         metavar='LEVEL', help='different attribute level:  family > subfamily genus > class')
     args = parser.parse_args()
     return args
 
 def print_args(args):
-    print "=========================================="
-    print "==========       CONFIG      ============="
-    print "=========================================="
+    print ("==========================================")
+    print ("==========       CONFIG      =============")
+    print ("==========================================")
     for arg,content in args.__dict__.items():
-        print "{}:{}".format(arg,content)
-    print "\n"
+        print ("{}:{}".format(arg,content))
+    print ("\n")
 
 def main():
     args = arg_parse()
     print_args(args)
 
     # Create dataloader
-    print "==> Creating dataloader..."
+    print ("==> Creating dataloader...")
     data_dir = args.data
     test_list = args.testlist
-    test_loader = get_test_set(data_dir, test_list, args)
-    classes_dict = {'sup': 25, 'sub': 292}
+    test_loader = get_test_set(data_dir,test_list,args)
 
     # load the network
-    print "==> Loading the network ..."
-    model = ResNetEmbed(cdict=classes_dict)
+    print ("==> Loading the network ...")
+    if args.level == 'species':
+        model = resnet50(num_classes=200)
+    if args.level == 'genus':
+        model = resnet50(num_classes=116)
+    if args.level == 'subfamily':
+        model = resnet50(num_classes=23)
+    if args.level == 'family':
+        model = resnet50(num_classes=5)
 
     model.cuda()
 
@@ -74,49 +82,42 @@ def main():
 
     cudnn.benchmark = True
 
-    print "Testing..."
+    print ("Testing...")
     with torch.no_grad():
         validate(test_loader, model, args)
     
+
 def validate(val_loader, model, args):
     batch_time = AverageMeter()
-    top1_prior = AverageMeter()
-    top5_prior = AverageMeter()
-    top1_inferior = AverageMeter()
-    top5_inferior = AverageMeter()
+    top1 = AverageMeter()
+    top5 = AverageMeter()
     
     # switch to evaluate mode
     model.eval() 
 
     end = time.time()
-    for i, (input, gt_sup, gt_sub) in enumerate(val_loader):
-        gt_sup = gt_sup.cuda(async=True)
-        gt_sub = gt_sub.cuda(async=True)
-
+    for i, (input, target) in enumerate(val_loader):
+        target = target.cuda(async=True)
         input_var = torch.autograd.Variable(input, volatile=True).cuda()
-        
-        # compute output
-        pred_prior,prec1_inferior = model(input_var)
-     
-        # measure accuracy and record loss
-        prec1_prior, prec5_prior = accuracy(pred_prior.data, gt_sup, topk=(1, 5))
-        prec1_inferior, prec5_inferior = accuracy(prec1_inferior.data, gt_sub, topk=(1, 5))
+        target_var = torch.autograd.Variable(target, volatile=True)
 
-        top1_prior.update(prec1_prior[0], input.size(0))
-        top5_prior.update(prec5_prior[0], input.size(0))
-        top1_inferior.update(prec1_inferior[0], input.size(0))
-        top5_inferior.update(prec5_inferior[0], input.size(0))
+        # compute output
+        output = model(input_var)        
+
+        # measure accuracy and record loss
+        prec1,prec5 = accuracy(output.data,target,topk = (1,5))
+
+        top1.update(prec1[0], input.size(0))
+        top5.update(prec5[0], input.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
-    print(' * L1(superclass): \tPrec@1 {top1_prior.avg:.3f} Prec@5 {top5_prior.avg:.3f}'
-          .format(top1_prior=top1_prior, top5_prior=top5_prior))
-    print(' * L2(subclass): \tPrec@1 {top1_inferior.avg:.3f} Prec@5 {top5_inferior.avg:.3f}'
-          .format(top1_inferior=top1_inferior, top5_inferior=top5_inferior))
+    print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
+          .format(top1=top1, top5=top5))
 
-    return top1_prior.avg, top1_inferior.avg
+    return top1.avg
 
 def get_test_set(data_dir,test_list,args):
     # Data loading code
@@ -127,13 +128,13 @@ def get_test_set(data_dir,test_list,args):
     scale_size = args.scale_size
     # center crop
     test_data_transform = transforms.Compose([
-          transforms.Resize((scale_size,scale_size)),
+          transforms.Scale((scale_size,scale_size)),
           transforms.CenterCrop(crop_size),
           transforms.ToTensor(),
           normalize,
       ])
 
-    test_set = VegfruDataset(data_dir, test_list, test_data_transform)
+    test_set = Butterfly200(data_dir, test_list, test_data_transform, level=args.level)
     test_loader = DataLoader(dataset=test_set, num_workers=args.workers,batch_size=args.batch_size, shuffle=False)
 
     return test_loader
