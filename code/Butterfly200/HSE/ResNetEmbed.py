@@ -34,6 +34,8 @@ class ResNetEmbed(nn.Module):
         self.fc_L2_raw = nn.Linear(2048, self.num_classes['subfamily'])
         self.fc_L2_cat = nn.Linear(2048*2, self.num_classes['subfamily'])
 
+        self.fc_L2_fg = nn.Linear(self.num_classes['family'], self.num_classes['subfamily'])
+
         # IV.   define the L3(genus) branch
         self.branch_L3_guide = self._make_branch(level='genus') # fed to guide model
         self.branch_L3_raw = self._make_branch(level='genus') # fed to fc
@@ -41,12 +43,18 @@ class ResNetEmbed(nn.Module):
         self.fc_L3_raw = nn.Linear(2048, self.num_classes['genus'])
         self.fc_L3_cat = nn.Linear(2048*2, self.num_classes['genus'])
 
+        self.fc_L3_fg = nn.Linear( self.num_classes['subfamily'], self.num_classes['genus'])
+
+
         # V.    define the L4(class) branch
         self.branch_L4_guide = self._make_branch(level='species') # fed to guide model
         self.branch_L4_raw = self._make_branch(level='species') # fed to fc
         self.fc_L4_guide = nn.Linear(2048, self.num_classes['species'])
         self.fc_L4_raw = nn.Linear(2048, self.num_classes['species'])
         self.fc_L4_cat = nn.Linear(2048*2, self.num_classes['species'])
+
+        self.fc_L4_fg = nn.Linear(self.num_classes['genus'], self.num_classes['species'])
+
 
         # VI.   define the guiding modules
         self.G12 = EmbedGuiding(prior='family', init=False)
@@ -78,7 +86,7 @@ class ResNetEmbed(nn.Module):
         f_l1 = self.branch_L1(f_share)
         f_l1 = self.avgpool(f_l1)
         f_l1 = f_l1.view(bz, -1)
-        s_l1 = self.fc_L1(f_l1) # score of L1
+        s_l1 = self.fc_L1(f_l1) # Score of L1
         '''
         (3.1)   L2 branches forward, and one branch predicts directly
         '''
@@ -102,7 +110,13 @@ class ResNetEmbed(nn.Module):
         f_l2_cat = torch.cat((f_12_g, f_l2_r), dim=1)
         s_l2_cat = self.fc_L2_cat(f_l2_cat)
 
-        s_l2_avg = (s_l2_r + s_l2_g + s_l2_cat) / 3
+        s_l2_avg = (s_l2_r + s_l2_g + s_l2_cat) / 3 # Score of L2
+        """
+        KL divergence of L2
+        """
+        s_l2_fg = self.fc_L2_fg(s_l1_)
+        s_l2_fg = self.softmax(s_l2_fg)
+
         '''
         (4.1)     L3 branches forward, and one branch predicts directly
         '''
@@ -126,7 +140,14 @@ class ResNetEmbed(nn.Module):
         f_l3_cat = torch.cat((f_13_g, f_l3_r), dim=1)
         s_l3_cat = self.fc_L3_cat(f_l3_cat)
 
-        s_l3_avg = (s_l3_r + s_l3_g + s_l3_cat) / 3
+        s_l3_avg = (s_l3_r + s_l3_g + s_l3_cat) / 3 # Score of L3
+        """
+        KL divergence of L3
+        """
+        s_l3_fg = self.fc_L3_fg(s_l2_)
+        s_l3_fg = self.softmax(s_l3_fg)
+
+
         '''
         (5.1)     L4 branches forward, and one branch predicts directly
         '''
@@ -151,5 +172,12 @@ class ResNetEmbed(nn.Module):
         s_l4_cat = self.fc_L4_cat(f_l4_cat)
 
         s_l4_avg = (s_l4_r + s_l4_g + s_l4_cat) / 3
+        """
+        KL divergence of L4
+        """
+        s_l4_fg = self.fc_L4_fg(s_l3_)
+        s_l4_fg = self.softmax(s_l4_fg)
 
-        return s_l1, s_l2_avg, s_l3_avg, s_l4_avg
+
+
+        return s_l1, s_l2_avg, s_l3_avg, s_l4_avg, s_l2_fg, s_l3_fg, s_l4_fg
