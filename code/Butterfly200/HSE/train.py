@@ -10,6 +10,8 @@ from dataloader import get_test_set
 from tqdm import tqdm
 from torchsummary import summary
 import statistics
+from torch.utils.tensorboard import SummaryWriter
+from opt import opt
 
 
 def select_device(gpu_device):
@@ -21,36 +23,8 @@ def select_device(gpu_device):
     nn_utils.select_device(gpu_device)
 
 
-def arg_parse():
-    parser = argparse.ArgumentParser(description='PyTorch HSE deploying')
-    parser.add_argument('-j', '--workers', default=2, type=int, metavar='N',
-                        help='number of data loading workers (default: 4)')
-    parser.add_argument('-b', '--batch-size', default=8, type=int,
-                        metavar='N', help='mini-batch size (default: 256)')
-    parser.add_argument('-l', '--learning_rate', default=0.001, type=float,
-                        help='LR')
-    parser.add_argument('--snapshot', default='', type=str, metavar='PATH',
-                        help='path to latest checkpoint (default: none)')
-    parser.add_argument('--crop_size', dest='crop_size', default=448, type=int,
-                        help='crop size')
-    parser.add_argument('--scale_size', dest='scale_size', default=512, type=int,
-                        help='the size of the rescale image')
-    parser.add_argument('-n', '--num_epocs', default=100, type=int, help='Num epocs (default: 100)')
-    args = parser.parse_args()
 
-    return args
-
-
-def print_args(args):
-    print("==========================================")
-    print("==========       CONFIG      =============")
-    print("==========================================")
-    for arg, content in args.__dict__.items():
-        print("{}:{}".format(arg, content))
-    print("\n")
-
-
-def train(train_loader, model, criterion, optimizer, level, criterion_additional):
+def train(train_loader, model, criterion, optimizer, level, criterion_additional, writer):
     top1_L1 = AverageMeter()
     top1_L2 = AverageMeter()
     top1_L3 = AverageMeter()
@@ -91,32 +65,46 @@ def train(train_loader, model, criterion, optimizer, level, criterion_additional
         loss_L3 = criterion(pred1_L3, gt_genus)
         loss_L4 = criterion(pred1_L4, gt_species)
 
-        topLoss_L1.update(loss_L1.item(), input.size(0))
-        topLoss_L2.update(loss_L2.item(), input.size(0))
-        topLoss_L3.update(loss_L3.item(), input.size(0))
-        topLoss_L4.update(loss_L4.item(), input.size(0))
+        loss_L2 = loss_L2 + T * criterion_additional(pred2_L2, pred1_L2)
+        loss_L3 = loss_L3 + T * criterion_additional(pred2_L3, pred1_L3)
+        loss_L4 = loss_L4 + T * criterion_additional(pred2_L4, pred1_L4)
+        total_loss = loss_L4 + loss_L3 + loss_L2 + loss_L1
 
         optimizer.zero_grad()
         if level == 1:
             loss_L1.backward()
         elif level == 2:
-            loss_L2 = loss_L2 + T * criterion_additional(pred2_L2, pred1_L2)
             loss_L2.backward()
         elif level == 3:
-            loss_L3 = loss_L3 + T * criterion_additional(pred2_L3, pred1_L3)
             loss_L3.backward()
         elif level == 4:
-            loss_L4 = loss_L4 + T * criterion_additional(pred2_L4, pred1_L4)
             loss_L4.backward()
         elif level == 5:
-            total_loss = loss_L4 + loss_L3 + loss_L2 + loss_L1
             total_loss.backward()
         optimizer.step()
 
-    return top1_L1.avg, top1_L2.avg, top1_L3.avg, top1_L4.avg, topLoss_L1.avg, topLoss_L2.avg, topLoss_L3.avg, topLoss_L4.avg
+        topLoss_L1.update(loss_L1.item(), input.size(0))
+        topLoss_L2.update(loss_L2.item(), input.size(0))
+        topLoss_L3.update(loss_L3.item(), input.size(0))
+        topLoss_L4.update(loss_L4.item(), input.size(0))
+
+        opt.trainIters +=1
+
+        # Tensorboard
+        writer.add_scalar('Train/Loss1', topLoss_L1.avg, opt.trainIters)
+        writer.add_scalar('Train/Loss2', topLoss_L2.avg, opt.trainIters)
+        writer.add_scalar('Train/Loss3', topLoss_L3.avg, opt.trainIters)
+        writer.add_scalar('Train/Loss4', topLoss_L4.avg, opt.trainIters)
+        writer.add_scalar('Train/LossTotal', total_loss, opt.trainIters)
+        writer.add_scalar('Train/Acc1', top1_L1.avg, opt.trainIters)
+        writer.add_scalar('Train/Acc2', top1_L2.avg, opt.trainIters)
+        writer.add_scalar('Train/Acc3', top1_L3.avg, opt.trainIters)
+        writer.add_scalar('Train/Acc4', top1_L4.avg, opt.trainIters)
+
+    return top1_L1.avg, top1_L2.avg, top1_L3.avg, top1_L4.avg, topLoss_L1.avg, topLoss_L2.avg, topLoss_L3.avg, topLoss_L4.avg, total_loss
 
 
-def valid(valid_loader, model, criterion):
+def valid(valid_loader, model, criterion, writer):
     top1_L1 = AverageMeter()
     top1_L2 = AverageMeter()
     top1_L3 = AverageMeter()
@@ -160,12 +148,25 @@ def valid(valid_loader, model, criterion):
         topLoss_L4.update(loss_L4.item(), input.size(0))
         total_loss = loss_L4 + loss_L3 + loss_L2 + loss_L1
 
-    return top1_L1.avg, top1_L2.avg, top1_L3.avg, top1_L4.avg, topLoss_L1.avg, topLoss_L2.avg, topLoss_L3.avg, topLoss_L4.avg
+        opt.valIters += 1
+
+        # Tensorboard
+        writer.add_scalar('Val/Loss1', topLoss_L1.avg, opt.valIters)
+        writer.add_scalar('Val/Loss2', topLoss_L2.avg, opt.valIters)
+        writer.add_scalar('Val/Loss3', topLoss_L3.avg, opt.valIters)
+        writer.add_scalar('Val/Loss4', topLoss_L4.avg, opt.valIters)
+        writer.add_scalar('Val/LossTotal', total_loss, opt.valIters)
+        writer.add_scalar('Val/Acc1', top1_L1.avg, opt.valIters)
+        writer.add_scalar('Val/Acc2', top1_L2.avg, opt.valIters)
+        writer.add_scalar('Val/Acc3', top1_L3.avg, opt.valIters)
+        writer.add_scalar('Val/Acc4', top1_L4.avg, opt.valIters)
+
+    return top1_L1.avg, top1_L2.avg, top1_L3.avg, top1_L4.avg, topLoss_L1.avg, topLoss_L2.avg, topLoss_L3.avg, topLoss_L4.avg, total_loss
 
 
 def main():
-    args = arg_parse()
-    print_args(args)
+
+    writer = SummaryWriter('runs/HSE_exp_2')
 
     # Create dataloader
     print("==> Creating dataloader...")
@@ -173,9 +174,8 @@ def main():
     val_list = 'data/Butterfly200/Butterfly200_val_release.txt'
     train_list = 'data/Butterfly200/Butterfly200_train_release.txt'
 
-    val_loader = get_test_set(data_dir, val_list, args)
-
-    train_loader = get_test_set(data_dir, train_list, args)
+    val_loader = get_test_set(data_dir, val_list, opt)
+    train_loader = get_test_set(data_dir, train_list, opt)
 
     classes_dict = {'family': 5, 'subfamily': 23, 'genus': 116, 'species': 200}
 
@@ -184,19 +184,19 @@ def main():
     model = ResNetEmbed(cdict=classes_dict)
 
     model.cuda()
-    summary(model, (3, 448, 448))
+    summary(model, (3, opt.crop_size, opt.crop_size))
 
     criterion = torch.nn.CrossEntropyLoss().cuda()
     criterion_additional = torch.nn.KLDivLoss().cuda()
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=0.00005)
+    optimizer = torch.optim.SGD(model.parameters(), lr=opt.learning_rate, momentum=opt.momentum, weight_decay=opt.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
 
     loss_decay = []
     level = 1
     model = torch.nn.DataParallel(model).cuda()
 
-    for epoch in range(args.num_epocs):
+    for epoch in range(opt.num_epocs):
         print('############# Starting Epoch {} #############'.format(epoch))
 
         if level >= 2:
@@ -235,43 +235,51 @@ def main():
                 params.requires_grad = True
         for params in model.module.trunk.parameters():
             params.requires_grad = False
-
-        acc1, acc2, acc3, acc4, loss1, loss2, loss3, loss4 = train(train_loader, model, criterion, optimizer, level,
-                                                                   criterion_additional)
+        acc1, acc2, acc3, acc4, loss1, loss2, loss3, loss4, total_loss = train(train_loader, model, criterion, optimizer, level,
+                                                                   criterion_additional, writer)
 
         print(
             'Train-{idx:d} level:{level:.4f} | epoch | loss1:{loss1:.4f} | loss2:{loss2:.4f} | loss3:{loss3:.4f} | '
-            'loss4:{loss4:.4f} | acc1:{acc1:.4f} | acc2:{acc2:.4f} | acc3:{acc3:.4f} | acc4:{acc4:.4f}'.format(
+            'loss4:{loss4:.4f} | total_loss:{total_loss:.4f} | acc1:{acc1:.4f} | acc2:{acc2:.4f} | acc3:{acc3:.4f} | '
+            'acc4:{acc4:.4f}'.format(
                 idx=epoch, level=level,
-                loss1=loss1, loss2=loss2, loss3=loss3, loss4=loss4,
+                loss1=loss1, loss2=loss2, loss3=loss3, loss4=loss4, total_loss = total_loss,
                 acc1=acc1, acc2=acc2, acc3=acc3, acc4=acc4
             ))
-        acc1, acc2, acc3, acc4, loss1, loss2, loss3, loss4 = valid(val_loader, model, criterion)
+        acc1, acc2, acc3, acc4, loss1, loss2, loss3, loss4, total_loss = valid(val_loader, model, criterion, writer)
         print(
             'Valid-{idx:d} level:{level:.4f} | epoch | loss1:{loss1:.4f} | loss2:{loss2:.4f} | loss3:{loss3:.4f} | '
-            'loss4:{loss4:.4f} | acc1:{acc1:.4f} | acc2:{acc2:.4f} | acc3:{acc3:.4f} | acc4:{acc4:.4f}'.format(
+            'loss4:{loss4:.4f} | total_loss:{total_loss:.4f} | acc1:{acc1:.4f} | acc2:{acc2:.4f} | acc3:{acc3:.4f} | '
+            'acc4:{acc4:.4f}'.format(
                 idx=epoch, level=level,
-                loss1=loss1, loss2=loss2, loss3=loss3, loss4=loss4,
+                loss1=loss1, loss2=loss2, loss3=loss3, loss4=loss4, total_loss=total_loss,
                 acc1=acc1, acc2=acc2, acc3=acc3, acc4=acc4
             ))
         if level == 1:
             loss_decay.append(loss1)
+            scheduler.step(loss1)
         elif level == 2:
             loss_decay.append(loss2)
+            scheduler.step(loss2)
         elif level == 3:
             loss_decay.append(loss3)
+            scheduler.step(loss3)
         elif level == 4:
             loss_decay.append(loss4)
-
+            scheduler.step(loss4)
         if len(loss_decay) > 5:
             loss_decay.pop(0)
-            if statistics.stdev(loss_decay) < 0.01:
+            if statistics.stdev(loss_decay) < opt.standar_deviation:
                 level += 1
                 loss_decay = []
+                scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+                if level == 5:
+                    optimizer.param_groups[0]['lr'] == 0.0001
 
-        # scheduler.step(loss)
     m_module = model.module
     torch.save(m_module.state_dict(), 'hse.pth')
+
+    writer.close()
 
 
 class AverageMeter(object):
@@ -310,5 +318,5 @@ def accuracy(output, target, topk=(1,)):
 
 
 if __name__ == '__main__':
-    select_device(2)
+    select_device(3)
     main()
