@@ -11,6 +11,7 @@ from tqdm import tqdm
 from torchsummary import summary
 import statistics
 
+
 def select_device(gpu_device):
     if (gpu_device == 'cpu') or (gpu_device == '-1') or (gpu_device == -1):
         device_to_use = '/cpu:0'
@@ -62,6 +63,7 @@ def train(train_loader, model, criterion, optimizer, level, criterion_additional
 
     model.train()
 
+    T = 0.0625
 
     for i, (input, gt_family, gt_subfamily, gt_genus, gt_species) in enumerate(tqdm(train_loader)):
         input = input.cuda().requires_grad_()
@@ -94,18 +96,17 @@ def train(train_loader, model, criterion, optimizer, level, criterion_additional
         topLoss_L3.update(loss_L3.item(), input.size(0))
         topLoss_L4.update(loss_L4.item(), input.size(0))
 
-
         optimizer.zero_grad()
         if level == 1:
             loss_L1.backward()
         elif level == 2:
-            loss_L2 = loss_L2 + criterion_additional(pred2_L2, pred1_L2)
+            loss_L2 = loss_L2 + T * criterion_additional(pred2_L2, pred1_L2)
             loss_L2.backward()
         elif level == 3:
-            loss_L3 = loss_L3 + criterion_additional(pred2_L3, pred1_L3)
+            loss_L3 = loss_L3 + T * criterion_additional(pred2_L3, pred1_L3)
             loss_L3.backward()
         elif level == 4:
-            loss_L4 = loss_L4 + criterion_additional(pred2_L4, pred1_L4)
+            loss_L4 = loss_L4 + T * criterion_additional(pred2_L4, pred1_L4)
             loss_L4.backward()
         elif level == 5:
             total_loss = loss_L4 + loss_L3 + loss_L2 + loss_L1
@@ -185,69 +186,71 @@ def main():
     model.cuda()
     summary(model, (3, 448, 448))
 
-
     criterion = torch.nn.CrossEntropyLoss().cuda()
     criterion_additional = torch.nn.KLDivLoss().cuda()
+
     optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=0.00005)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer)
+
     loss_decay = []
     level = 1
+    model = torch.nn.DataParallel(model).cuda()
 
     for epoch in range(args.num_epocs):
         print('############# Starting Epoch {} #############'.format(epoch))
 
         if level >= 2:
-            for params in model.branch_L1.parameters():
+            for params in model.module.branch_L1.parameters():
                 params.requires_grad = False
-            for params in model.fc_L1.parameters():
+            for params in model.module.fc_L1.parameters():
                 params.requires_grad = False
         if level >= 3:
-            for params in model.branch_L2_guide.parameters():
+            for params in model.module.branch_L2_guide.parameters():
                 params.requires_grad = False
-            for params in model.branch_L2_raw.parameters():
+            for params in model.module.branch_L2_raw.parameters():
                 params.requires_grad = False
-            for params in model.fc_L2_raw.parameters():
+            for params in model.module.fc_L2_raw.parameters():
                 params.requires_grad = False
-            for params in model.fc_L2_guide.parameters():
+            for params in model.module.fc_L2_guide.parameters():
                 params.requires_grad = False
-            for params in model.G12.parameters():
+            for params in model.module.G12.parameters():
                 params.requires_grad = False
-            for params in model.fc_L2_cat.parameters():
+            for params in model.module.fc_L2_cat.parameters():
                 params.requires_grad = False
         if level >= 4:
-            for params in model.branch_L3_guide.parameters():
+            for params in model.module.branch_L3_guide.parameters():
                 params.requires_grad = False
-            for params in model.branch_L3_raw.parameters():
+            for params in model.module.branch_L3_raw.parameters():
                 params.requires_grad = False
-            for params in model.fc_L3_raw.parameters():
+            for params in model.module.fc_L3_raw.parameters():
                 params.requires_grad = False
-            for params in model.fc_L3_guide.parameters():
+            for params in model.module.fc_L3_guide.parameters():
                 params.requires_grad = False
-            for params in model.G23.parameters():
+            for params in model.module.G23.parameters():
                 params.requires_grad = False
-            for params in model.fc_L3_cat.parameters():
+            for params in model.module.fc_L3_cat.parameters():
                 params.requires_grad = False
         if level == 5:
-            for params in model.parameters():
+            for params in model.module.parameters():
                 params.requires_grad = True
-        for params in model.trunk.parameters():
+        for params in model.module.trunk.parameters():
             params.requires_grad = False
-        summary(model, (3, 448, 448))
 
-        model = torch.nn.DataParallel(model).cuda()
-
-        acc1, acc2, acc3, acc4, loss1, loss2, loss3, loss4 = train(train_loader, model, criterion, optimizer, level, criterion_additional)
+        acc1, acc2, acc3, acc4, loss1, loss2, loss3, loss4 = train(train_loader, model, criterion, optimizer, level,
+                                                                   criterion_additional)
 
         print(
-            'Train-{idx:d} epoch | loss1:{loss1:.4f} | loss2:{loss2:.4f} | loss3:{loss3:.4f} | loss4:{loss4:.4f} | acc1:{acc1:.4f} | acc2:{acc2:.4f} | acc3:{acc3:.4f} | acc4:{acc4:.4f}'.format(
-                idx=epoch,
+            'Train-{idx:d} level:{level:.4f} | epoch | loss1:{loss1:.4f} | loss2:{loss2:.4f} | loss3:{loss3:.4f} | '
+            'loss4:{loss4:.4f} | acc1:{acc1:.4f} | acc2:{acc2:.4f} | acc3:{acc3:.4f} | acc4:{acc4:.4f}'.format(
+                idx=epoch, level=level,
                 loss1=loss1, loss2=loss2, loss3=loss3, loss4=loss4,
                 acc1=acc1, acc2=acc2, acc3=acc3, acc4=acc4
             ))
         acc1, acc2, acc3, acc4, loss1, loss2, loss3, loss4 = valid(val_loader, model, criterion)
         print(
-            'Valid-{idx:d} epoch | loss1:{loss1:.4f} | loss2:{loss2:.4f} | loss3:{loss3:.4f} | loss4:{loss4:.4f} | acc1:{acc1:.4f} | acc2:{acc2:.4f} | acc3:{acc3:.4f} | acc4:{acc4:.4f}'.format(
-                idx=epoch,
+            'Valid-{idx:d} level:{level:.4f} | epoch | loss1:{loss1:.4f} | loss2:{loss2:.4f} | loss3:{loss3:.4f} | '
+            'loss4:{loss4:.4f} | acc1:{acc1:.4f} | acc2:{acc2:.4f} | acc3:{acc3:.4f} | acc4:{acc4:.4f}'.format(
+                idx=epoch, level=level,
                 loss1=loss1, loss2=loss2, loss3=loss3, loss4=loss4,
                 acc1=acc1, acc2=acc2, acc3=acc3, acc4=acc4
             ))
@@ -259,14 +262,12 @@ def main():
             loss_decay.append(loss3)
         elif level == 4:
             loss_decay.append(loss4)
-        elif level == 5:
 
         if len(loss_decay) > 5:
             loss_decay.pop(0)
             if statistics.stdev(loss_decay) < 0.01:
                 level += 1
                 loss_decay = []
-
 
         # scheduler.step(loss)
     m_module = model.module
